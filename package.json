@@ -1,0 +1,31 @@
+{
+  "name": "remote-render-demo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "React rendered in Node, operations streamed to a dumb browser DOM interpreter over WebSocket",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "npm run build:web && tsx src/node-render.ts",
+    "start:remote": "tsx src/node-render.ts",
+    "build:web": "node scripts/build-web.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-reconciler": "0.29.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/react-reconciler": "0.28.9",
+    "@types/ws": "^8.5.10",
+    "esbuild": "^0.24.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

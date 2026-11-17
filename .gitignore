@@ -1,0 +1,3 @@
+node_modules/
+src/webui/web-bundle.js
+*.log
