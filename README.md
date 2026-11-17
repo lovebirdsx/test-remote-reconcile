@@ -4,6 +4,7 @@ React 跑在 Node 进程里，界面画在浏览器里。
 
 - **Node 是唯一状态源**：业务组件、hooks、事件处理函数都在 Node。
 - **浏览器不加载 React**：远程页只有一个原生 JS 文件，它接收快照和操作流，把操作应用到 DOM。
+- **第二个渲染器不依赖浏览器**：`src/tui/` 是同一套 `snapshot` + `patch` 协议的终端 TUI 客户端，可与浏览器同时在线。
 - **跨进程传的是操作，不是 HTML/截图**：`create` / `insert` / `update` / `remove`。
 - **刷新靠快照**：新连接先收全量 `snapshot`，之后只收增量 `patch`。
 
@@ -22,17 +23,27 @@ npm start
 
 `npm start` 会先执行一次 `npm run build:web`（M6 的 react-dom 对照页需要），再用 `tsx` 启动 Node 服务。
 
+再开一个终端，启动第二个渲染器（终端 TUI）：
+
+```bash
+npm run tui
+```
+
 打开：
 
-| 地址 | 渲染方 | 用途 |
+| 地址 / 命令 | 渲染方 | 用途 |
 | --- | --- | --- |
-| <http://127.0.0.1:8787/> | Node 里的 React + 自定义 hostConfig | 主演示：远程渲染 |
+| <http://127.0.0.1:8787/> | Node 里的 React + 自定义 hostConfig | 主演示：远程渲染到浏览器 DOM |
 | <http://127.0.0.1:8787/web> | 浏览器里的 react-dom | M6 对照：同一份 `app.tsx` 换渲染器 |
+| `npm run tui` | Node 里的同一套 ops + 终端 TUI 解释器 | 第二个渲染器：不依赖浏览器 |
 
 其他命令：
 
 ```bash
 npm run start:remote   # 跳过 build:web，只启动远程页
+npm run tui            # 终端 TUI，连接现有 /ws（先启动服务端）
+npm run tui:once       # 非交互：连接后输出一帧，便于断言
+npm run tui:frames     # 非交互：输出 snapshot 帧 + 1 个 patch 帧
 npm run build:web      # 只构建 /web 用的 bundle
 npm run typecheck      # tsc --noEmit
 ```
@@ -43,6 +54,7 @@ npm run typecheck      # tsc --noEmit
 - 端口固定 `127.0.0.1:8787`。被占用时先停掉旧进程。
 - 日志：Node 看终端；浏览器看 DevTools Console。浏览器端还暴露了 `window.__logs`、`window.__nodes`、`window.__props`、`window.__identity(id)` 方便检查。
 - `/web` 依赖 `src/webui/web-bundle.js`。只用 `npm run start:remote` 且从未构建时，这个页面会 500。
+- TUI 建议在 Windows Terminal / 现代终端里运行；旧 conhost 不支持某些 VT 序列时可加 `--no-alt-screen`。`Ctrl+C` 或 `Esc` 退出并恢复终端。
 
 ---
 
@@ -89,6 +101,8 @@ npm run typecheck      # tsc --noEmit
 
 一句话：**React 的协调结果在 Node 被翻译成小操作，浏览器只负责“照操作改 DOM”；事件反向流回 Node，状态变更再变成新的操作。**
 
+第二个目标复用同一条下半段：`src/tui/` 的独立 WS 客户端把同一批 `snapshot` / `patch` 应用到 `TargetTree`，再布局成字符网格输出到终端；键盘事件按同样的 `{ kind: 'event', id, name, payload }` 格式回传 Node。服务端和 `hostConfig` 不需要为 TUI 做任何修改。
+
 ---
 
 ## 目录结构
@@ -96,7 +110,7 @@ npm run typecheck      # tsc --noEmit
 ```text
 .
 ├─ src/
-│  ├─ app.tsx                 # 唯一的业务 App，两台渲染器共用
+│  ├─ app.tsx                 # 唯一的业务 App，多个渲染器共用
 │  ├─ widgets.tsx             # 远程控件：只 createElement('Box' | 'Text' | ...)
 │  ├─ widgets.dom.tsx         # M6：同名控件的 react-dom 实现
 │  ├─ web-render.tsx          # M6：createRoot(...).render(<App />)
@@ -105,11 +119,21 @@ npm run typecheck      # tsc --noEmit
 │  │  ├─ hostConfig.ts        # 假节点树 + 操作录制（每个函数都有一行注释）
 │  │  ├─ ops.ts               # 4 种操作类型 + clean()/cleanProps()
 │  │  └─ snapshot.ts          # 假节点树 → 全量快照
-│  └─ webui/
-│     ├─ index.html           # 远程页 /，只加载 interpreter.js
-│     ├─ interpreter.js       # 手写解释器：快照 + 4 种操作 + 事件回传
-│     ├─ web.html             # 对照页 /web
-│     └─ web-bundle.js        # esbuild 产物，已 gitignore
+│  ├─ webui/
+│  │  ├─ index.html           # 远程页 /，只加载 interpreter.js
+│  │  ├─ interpreter.js       # 手写解释器：快照 + 4 种操作 + 事件回传
+│  │  ├─ web.html             # 对照页 /web
+│  │  └─ web-bundle.js        # esbuild 产物，已 gitignore
+│  └─ tui/                    # 第二个渲染器：终端 TUI（不依赖浏览器）
+│     ├─ protocol.ts          # 消息类型，type-only 复用 ops.ts / snapshot.ts
+│     ├─ target.ts            # TargetTree：镜像快照并应用 4 种操作
+│     ├─ width.ts             # CJK/emoji 显示宽度、码点与截断工具
+│     ├─ screen.ts            # Cell Grid、ANSI 序列化、颜色降级
+│     ├─ layout.ts            # Box/Border/Text/Button/Input 的测量与排布
+│     ├─ paint.ts             # 栅格化、焦点、Input 光标、状态栏
+│     ├─ keys.ts              # readline keypress -> 终端动作
+│     ├─ session.ts           # WS 连接、焦点/编辑状态、渲染调度、终端生命周期
+│     └─ main.ts              # CLI 入口：--once / --frames / --color 等
 ├─ scripts/
 │  └─ build-web.mjs           # 只给 M6 用的一次性构建
 ├─ docs/
@@ -126,12 +150,14 @@ npm run typecheck      # tsc --noEmit
 `src/app.tsx` 只 import `./widgets`，从不 import `react-dom` 或 `react-reconciler`。
 
 - **远程渲染**：`widgets.tsx` 把 `<Box>` 变成 `React.createElement('Box', props)`。hostConfig 的 `createInstance` 收到宿主类型字符串 `"Box"`，创建假节点，发 `create` 操作。浏览器把 `"Box"` 映射成 `<div>`。
+- **终端 TUI**：复用同一个 hostConfig 和同一批操作流；`src/tui/` 把 `"Box"` 排成字符网格里的一个区域，`"Button"` 渲染成 `[label]`。它连的是同一个 `/ws`，不加载 React。
 - **react-dom 渲染**：`scripts/build-web.mjs` 用 esbuild 插件，只在 `app.tsx` 里把 `./widgets` 别名到 `widgets.dom.tsx`，后者把同名控件实现为真正的 `<div>` / `<span>` / `<button>` / `<input>`。
 
-因此两个页面跑的是**同一份业务代码**：
+因此同一份业务代码现在有三个目标：
 
 ```text
-src/app.tsx  ──┬── Node: widgets.tsx     → 自定义 hostConfig → 操作流 → interpreter.js
+src/app.tsx  ──┬── Node: widgets.tsx     → 自定义 hostConfig → 操作流 → interpreter.js（DOM）
+               ├── Node: 同一份操作流     → 终端 TUI 客户端 → TargetTree → ANSI
                └── 浏览器: widgets.dom.tsx → react-dom        → 原生 DOM
 ```
 
@@ -306,7 +332,7 @@ LegacyRoot 让 `updateContainer` 和 WS 回调里的 `setState` 都同步提交�
 
 ---
 
-## 验收：M1–M6 怎么观察
+## 验收：M1–M7 怎么观察
 
 以下是一次实测的代表值；节点 id、commit 编号、`count` 会随启动时长变化。
 
@@ -427,6 +453,126 @@ input placeholder: "type here"
 - 页面无 `console.error` / `pageerror`。
 - `/web` 没有自定义标签（`Box` / `Text` / `Border` 数量为 0）。
 
+### M7：终端 TUI（第二个渲染器）
+
+终端 A 启动服务端，终端 B 运行 `npm run tui`：
+
+```text
+node-render.ts terminal:
+[node] 新客户端连接，发送快照
+[node] 快照已发送，节点数 34，客户端数 1
+```
+
+TUI 应显示完整界面、圆角/方角 Border、CJK 文字和底部状态栏；`count` 每秒变化，状态栏显示 `ws:on | patch #N`。
+
+同时打开浏览器 `http://127.0.0.1:8787/`：
+
+- Node 日志客户端数变为 2；
+- 任一端的操作都会让两端同步更新（同一个 reconciler、同一批 patch）。
+
+交互检查：
+
+- 焦点顺序：`+1` → `name` Input → `显示详情` → `handled 按钮` → `普通按钮`。
+- 聚焦 `+1` 按 Enter：两端 count 都增加；TUI 状态栏 patch 编号增加。
+- 聚焦 `handled 按钮` 按 Enter：Node 日志只有它自己的 `onMouseDown` 和 `onClick`，父 Border 不高亮。
+- 聚焦 `普通按钮` 按 Enter：Node 日志有按钮和父 Border 的 `onMouseDown`，Border 短暂高亮。
+- 聚焦 Input 输入中文/英文、退格、左右移动：Node 日志收到 `onChange`，浏览器输入框同步；连续快输入时 TUI 本地 draft 不被滞后 patch 吞掉。
+- 调整终端大小：布局重排，不花屏。
+- `Ctrl+C` 退出后终端恢复（光标可见、回到原屏幕）；重新运行 `npm run tui`，靠 snapshot 恢复 count 和 name。
+
+非交互冒烟：
+
+```bash
+npm run tui:once | grep -E "Remote React Demo|count:|显示详情"
+npm run tui:frames
+```
+
+`tui:once` 应输出一帧纯文本；`tui:frames` 输出两帧，`count` 值不同，状态栏分别是 `patch #0` 和 `patch #1`。
+
+---
+
+## 第二个渲染器：终端 TUI
+
+`src/tui/` 是第二个渲染目标：不加载 React、不依赖浏览器，作为独立 WS 客户端连接 `ws://127.0.0.1:8787/ws`。它消费的仍然是 Node 里唯一 reconciler 产生的 `snapshot` + `patch`，因此：
+
+- Node 状态只有一份；TUI 和浏览器同时在线时看到的是同一份状态。
+- 服务端、`hostConfig`、协议都没有为 TUI 改动。
+- 新连接/断线重连仍然靠全量 snapshot 恢复。
+
+```text
+React (Node)
+  → hostConfig → { snapshot, patch } ─┬→ 浏览器 interpreter → DOM
+                                      └→ TUI TargetTree → 布局 → Cell Grid → ANSI
+TUI 键盘 → { kind:'event', id, name, payload } → runHandler → setState → 新 patch
+```
+
+### 终端侧链路
+
+1. `target.ts` 的 `TargetTree` 与 `interpreter.js` 等价地应用操作：`insert` 先 detach 再按 index 插入，`remove` 只带子树根 id 所以必须递归删除，`update` 用 `null` 删除属性。
+2. `layout.ts` 自底向上测量、自顶向下排布出 `LayoutBox`；`paint.ts` 把盒子画到 `screen.ts` 的 Cell Grid，再序列化成 ANSI。
+3. `session.ts` 负责 WS 连接/重连、焦点与编辑状态、事件发送、16ms 合并重绘、alternate screen / raw mode / resize / 退出恢复。
+4. `keys.ts` 把 readline keypress 归一化成动作；`main.ts` 解析 CLI 并处理 `--once` / `--frames`。
+
+### 布局近似规则
+
+| 规则 | 说明 |
+| --- | --- |
+| 像素 → 字符格 | `max(1, round(px / 16))`；当前 App 的 gap 8/12、padding 8/12 都映射为 1 格 |
+| Box | 支持 `row` / `column`、`gap`、`align`、`justify`；`stretch` 只做简单的交叉轴填充 |
+| Border | 用 1 格外框近似浏览器里无边框的 div；`radius > 0` 用圆角 `╭╮╰╯`，否则 `┌┐└┘`；背景色填充整个区域 |
+| Text | 单行不换行；`size >= 18` 加 bold，`size <= 12` 用 dim（终端无法改字号） |
+| Button | 渲染为 `[label]`；聚焦时用高亮背景和加粗文字 |
+| Input | 宽度 clamp 到 12~40 列；聚焦编辑时水平滚动并用反显单元格画光标 |
+| CJK | 按 code point 计算显示宽度；宽字符占 2 格，组合字符附加到前一格 |
+| 溢出 | v1 不换行、不滚动；超宽截断，超高由 Grid 裁剪 |
+| 颜色 | 24-bit / 256 / 16 / none；`auto` 根据 `COLORTERM`/`TERM` 选择 |
+
+### 键盘
+
+| 按键 | 行为 |
+| --- | --- |
+| `Tab` / `Shift+Tab` | 在 `Button` / `Input` 之间循环切换焦点 |
+| `Up` / `Down` | 切换焦点（Input 内不用于移动光标） |
+| `Enter` / `Space` | 触发焦点 Button；Input 编辑时 `Enter` 移到下一个控件，`Space` 插入空格 |
+| `←` / `→` / `Home` / `End` | 移动 Input 光标 |
+| `Backspace` / `Delete` | 删除 Input 字符 |
+| `Ctrl+C` / `Esc` | 退出并恢复终端 |
+
+### Button 事件顺序与 `handled`
+
+键盘激活模拟浏览器里“按下再点击”的顺序：
+
+1. 遍历 `chain(buttonId, 'onMouseDown')`，逐个发送；每发一个后检查该节点的 `props.handled === true`，为 true 则停止向祖先冒泡。
+2. 再遍历 `chain(buttonId, 'onClick')`，逐个发送 `onClick`，**不检查 handled**（与浏览器 click 行为一致）。
+
+因此：
+
+- `handled 按钮` 按 Enter：只发自己的 `onMouseDown`，父 Border 不收到，不会高亮。
+- `普通按钮` 按 Enter：按钮和父 Border 都会收到 `onMouseDown`，父 Border 短暂高亮约 320ms。
+- 两个按钮的 `onClick` 都会触发；`+1` 也会让两个客户端同时增加计数。
+
+### Input 受控回流
+
+- 进入 Input 焦点时，本地 `draft` 从服务端 `value` 初始化，光标在末尾。
+- 每次编辑立即重绘，并向 `chain(inputId, 'onChange')` 发送 `{ value: draft }`。
+- 服务端 patch 回来时：
+  - 等于当前 draft：确认，保持光标；
+  - 等于某个尚未确认的已发送值：判定为滞后的回显，保留本地更长的 draft（避免快输入时吞字）；
+  - 其他：视为外部修改，采用服务端值并把光标移到末尾。
+- 焦点移到别的控件、或 Input 被 remove 时，编辑态清空。
+
+### 非交互模式
+
+```bash
+npm run tui:once     # snapshot 一帧，stdout 纯文本
+npm run tui:frames   # snapshot 帧 + 1 个 patch 帧（默认 count 会变化）
+```
+
+- 非交互模式的 stdout 只有帧内容，调试日志写 stderr，便于管道/grep/断言。
+- `--width` / `--height` 指定虚拟终端尺寸；`--no-color` 完全关闭 ANSI 样式。
+- `--frames N` 的计数规则：snapshot 是第 1 帧，之后每个 patch 一帧。
+- 非交互模式不会进入 raw mode / alternate screen，也不自动重连。
+
 ---
 
 ## 与真正生产方案的差距
@@ -447,15 +593,18 @@ input placeholder: "type here"
 
 ## 已知问题与有意不做
 
-- **Input 光标会跳到末尾**：受控输入每次 patch 回来都重设 `value`。按要求不做光标保持。
-- **多客户端是广播**：所有客户端收到同一份 patch；没有按客户端区分的状态。
-- **无重连**：WS 断开后不会自动重连；刷新建立新连接并重新拿快照。
+- **Input 光标会跳到末尾（浏览器）**：受控输入每次 patch 回来都重设 `value`。按要求不做光标保持；TUI 自己维护光标，不受此影响。
+- **多客户端是广播**：所有客户端收到同一份 patch；没有按客户端区分的状态。TUI 的焦点/编辑态是本地状态，Input 并发编辑最后写入者获胜。
+- **无重连（浏览器）**：浏览器 WS 断开后不会自动重连；刷新建立新连接并重新拿快照。TUI 交互模式做了 500ms 起步、最大 5s 的指数退避重连，重连后同样靠 snapshot 恢复。
 - **无客户端时 ops 丢弃**：不排队、不重放；这是有意简化。
 - **LegacyRoot 同步提交**：便于观察日志，但不是并发安全的完整实现。
 - **ops 在 render 阶段产生**：如果一次并发渲染被 React 放弃，已记录的 create/insert 可能残留到下一批。本 Demo 的同步根不会触发，但生产实现要按 commit 范围隔离。
 - **`clean()` 有损**：alpha 被丢弃，命名色原样保留，非普通对象被丢弃；这是为了 Demo 可读性，不是通用序列化器。
-- **未知宿主类型静默变 `<div>`**：`interpreter.js` 的 `TAGS[type] || 'div'` 是容错，不是正式行为。
+- **未知宿主类型静默变 `<div>`**：`interpreter.js` 的 `TAGS[type] || 'div'` 是容错，不是正式行为；TUI 把它当透明 column 容器。
 - **`handled` 只影响 mousedown 路由**：click 仍会沿祖先链发送给所有带 `onClick` 的节点；Demo 里父容器没有 `onClick`，所以没暴露。
+- **TUI 布局是近似**：`px → 字符格` 用固定 16px/格；Border 用 1 格外框近似浏览器里无边框的 div；`align="stretch"` 只做简单填充；不支持换行、滚动、圆角像素、阴影。
+- **TUI 的 CJK/emoji 宽度是近似 wcwidth**：组合字符和 ZWJ 序列可能有偏差；不支持输入法组合预览，只处理提交后的文本。
+- **TUI 依赖终端 VT 支持**：旧 conhost 可能不支持 alternate screen / 24-bit 颜色；可用 `--no-alt-screen`、`--color=256/16/none` 降级。被 SIGKILL 时来不及恢复终端，可用 `reset` 命令修复。
 
 ---
 

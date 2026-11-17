@@ -9,6 +9,9 @@
   "scripts": {
     "start": "npm run build:web && tsx src/node-render.ts",
     "start:remote": "tsx src/node-render.ts",
+    "tui": "tsx src/tui/main.ts",
+    "tui:once": "tsx src/tui/main.ts --once --no-color --width 100 --height 32",
+    "tui:frames": "tsx src/tui/main.ts --frames 2 --timeout-ms 5000 --no-color --width 100 --height 32",
     "build:web": "node scripts/build-web.mjs",
     "typecheck": "tsc --noEmit"
   },
